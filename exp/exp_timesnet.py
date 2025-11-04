@@ -228,3 +228,31 @@ class Exp_TimesNet(Exp_Basic):
             'mae': mae, 'mse': mse, 'rmse': rmse,
             'mape': mape, 'mspe': mspe
         }
+
+    # exp/exp_timesnet.py
+    class Exp_TimesNet(Exp_Basic):
+        def _get_data(self, flag):
+            args = self.args
+            if args.task_name == 'imputation':
+                # 缺失值补全任务
+                dataset = PriceImputationDataset(
+                    root_path=args.root_path,
+                    flag=flag
+                )
+            elif args.task_name == 'forecast':
+                # 价格预测任务
+                dataset = PriceForecastDataset(
+                    root_path=args.root_path,
+                    flag=flag
+                )
+            else:
+                raise ValueError(f"Unknown task: {args.task_name}")
+
+            data_loader = torch.utils.data.DataLoader(
+                dataset,
+                batch_size=args.batch_size,
+                shuffle=(flag == 'train'),
+                num_workers=args.num_workers,
+                drop_last=(flag == 'train')
+            )
+            return dataset, data_loader
