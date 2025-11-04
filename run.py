@@ -17,7 +17,13 @@ if __name__ == '__main__':
     torch.manual_seed(fix_seed)
     np.random.seed(fix_seed)
 
-    parser = argparse.ArgumentParser(description='TimesNet')
+
+    parser = argparse.ArgumentParser(description='Time Series Library')
+
+    parser.add_argument('--d_model', type=int, default=64, help='Dimension of TimesNet model')
+    parser.add_argument('--e_layers', type=int, default=2, help='Number of TimesBlock layers')
+
+    args = parser.parse_args()
 
     # basic config
     parser.add_argument('--task_name', type=str, required=True, default='long_term_forecast',
