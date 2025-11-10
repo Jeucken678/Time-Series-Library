@@ -1,5 +1,5 @@
 from data_provider.data_loader import Dataset_ETT_hour, Dataset_ETT_minute, Dataset_Custom, Dataset_M4, PSMSegLoader, \
-    MSLSegLoader, SMAPSegLoader, SMDSegLoader, SWATSegLoader, UEAloader
+    MSLSegLoader, SMAPSegLoader, SMDSegLoader, SWATSegLoader, UEAloader,Dataset_RealEstate
 from data_provider.uea import collate_fn
 from torch.utils.data import DataLoader
 
@@ -9,6 +9,7 @@ data_dict = {
     'ETTm1': Dataset_ETT_minute,
     'ETTm2': Dataset_ETT_minute,
     'custom': Dataset_Custom,
+    'real_estate': Dataset_RealEstate,
     'm4': Dataset_M4,
     'PSM': PSMSegLoader,
     'MSL': MSLSegLoader,
@@ -31,10 +32,10 @@ def data_provider(args, flag):
     if args.task_name == 'anomaly_detection':
         drop_last = False
         data_set = Data(
-            args = args,
             root_path=args.root_path,
-            win_size=args.seq_len,
+            seq_len=args.seq_len,
             flag=flag,
+            pred_len=args.pred_len,
         )
         print(flag, len(data_set))
         data_loader = DataLoader(
@@ -65,16 +66,10 @@ def data_provider(args, flag):
         if args.data == 'm4':
             drop_last = False
         data_set = Data(
-            args = args,
             root_path=args.root_path,
-            data_path=args.data_path,
             flag=flag,
-            size=[args.seq_len, args.label_len, args.pred_len],
-            features=args.features,
-            target=args.target,
-            timeenc=timeenc,
-            freq=freq,
-            seasonal_patterns=args.seasonal_patterns
+            seq_len=args.seq_len,
+            pred_len =args.pred_len,
         )
         print(flag, len(data_set))
         data_loader = DataLoader(

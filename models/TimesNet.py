@@ -1,7 +1,22 @@
-import torch
-import torch.nn as nn
+import torch  # 已有的导入
+import torch.nn as nn  # 补充这行，关键！
 import torch.nn.functional as F
-from utils.metrics import FFT_for_Period  # 复用库中FFT工具函数
+import torch.fft
+from layers.Embed import DataEmbedding
+from layers.Conv_Blocks import Inception_Block_V1
+
+
+# 保留该函数的定义
+def FFT_for_Period(x, k=2):
+    # [B, T, C]
+    xf = torch.fft.rfft(x, dim=1)
+    # find period by amplitudes
+    frequency_list = abs(xf).mean(0).mean(-1)
+    frequency_list[0] = 0
+    _, top_list = torch.topk(frequency_list, k)
+    top_list = top_list.detach().cpu().numpy()
+    period = x.shape[1] // top_list
+    return period, abs(xf).mean(-1)[:, top_list]
 
 
 class TimesBlock(nn.Module):

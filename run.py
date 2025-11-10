@@ -20,10 +20,6 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Time Series Library')
 
-    parser.add_argument('--d_model', type=int, default=64, help='Dimension of TimesNet model')
-    parser.add_argument('--e_layers', type=int, default=2, help='Number of TimesBlock layers')
-
-    args = parser.parse_args()
 
     # basic config
     parser.add_argument('--task_name', type=str, required=True, default='long_term_forecast',
@@ -32,6 +28,10 @@ if __name__ == '__main__':
     parser.add_argument('--model_id', type=str, required=True, default='test', help='model id')
     parser.add_argument('--model', type=str, required=True, default='Autoformer',
                         help='model name, options: [Autoformer, Transformer, TimesNet]')
+
+    parser.add_argument('--d_model', type=int, default=64, help='Dimension of TimesNet model')
+    parser.add_argument('--e_layers', type=int, default=2, help='Number of TimesBlock layers')
+
 
     # data loader
     parser.add_argument('--data', type=str, required=True, default='ETTh1', help='dataset type')
@@ -63,11 +63,10 @@ if __name__ == '__main__':
     parser.add_argument('--top_k', type=int, default=5, help='for TimesBlock')
     parser.add_argument('--num_kernels', type=int, default=6, help='for Inception')
     parser.add_argument('--enc_in', type=int, default=7, help='encoder input size')
+    parser.add_argument('--input_size', type=int, required=True, help='输入特征的维度')
     parser.add_argument('--dec_in', type=int, default=7, help='decoder input size')
     parser.add_argument('--c_out', type=int, default=7, help='output size')
-    parser.add_argument('--d_model', type=int, default=512, help='dimension of model')
     parser.add_argument('--n_heads', type=int, default=8, help='num of heads')
-    parser.add_argument('--e_layers', type=int, default=2, help='num of encoder layers')
     parser.add_argument('--d_layers', type=int, default=1, help='num of decoder layers')
     parser.add_argument('--d_ff', type=int, default=2048, help='dimension of fcn')
     parser.add_argument('--moving_avg', type=int, default=25, help='window size of moving average')

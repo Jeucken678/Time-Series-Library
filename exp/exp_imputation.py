@@ -18,13 +18,14 @@ class Exp_Imputation(Exp_Basic):
         super(Exp_Imputation, self).__init__(args)
 
     def _build_model(self):
-        model = self.model_dict[self.args.model].Model(self.args).float()
+        model = self.model_dict[self.args.model].TimesNet(self.args).float()
 
         if self.args.use_multi_gpu and self.args.use_gpu:
             model = nn.DataParallel(model, device_ids=self.args.device_ids)
         return model
 
     def _get_data(self, flag):
+        # 假设data_provider已修改为返回包含nan_mask的6元素元组
         data_set, data_loader = data_provider(self.args, flag)
         return data_set, data_loader
 
@@ -40,38 +41,39 @@ class Exp_Imputation(Exp_Basic):
         total_loss = []
         self.model.eval()
         with torch.no_grad():
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(vali_loader):
+            # 接收6个值（新增nan_mask）
+            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark, target_mask, nan_mask) in enumerate(vali_loader):
+                # 数据类型转换并移动到设备
                 batch_x = batch_x.float().to(self.device)
+                batch_y = batch_y.float().to(self.device)
                 batch_x_mark = batch_x_mark.float().to(self.device)
+                batch_y_mark = batch_y_mark.float().to(self.device)
+                target_mask = target_mask.float().to(self.device)  # 需要补全的位置（1表示需要补全）
+                nan_mask = nan_mask.float().to(self.device)  # 原始数据有效性（0表示有效，1表示无效）
 
-                # random mask
-                B, T, N = batch_x.shape
-                """
-                B = batch size
-                T = seq len
-                N = number of features
-                """
-                mask = torch.rand((B, T, N)).to(self.device)
-                mask[mask <= self.args.mask_rate] = 0  # masked
-                mask[mask > self.args.mask_rate] = 1  # remained
-                inp = batch_x.masked_fill(mask == 0, 0)
+                # 生成有效计算掩码：原始数据有效（nan_mask=0）且需要补全（target_mask=1）
+                valid_mask = (nan_mask == 0.0) & (target_mask == 1.0)
 
-                outputs = self.model(inp, batch_x_mark, None, None, mask)
+                # 掩盖输入中需要补全的位置（与训练逻辑一致）
+                inp = batch_x.masked_fill(target_mask == 1.0, 0.0)  # 仅掩盖需要补全的位置
 
+                # 模型前向传播
+                outputs = self.model(inp, batch_x_mark, None, None, target_mask)
+
+                # 处理特征维度
                 f_dim = -1 if self.args.features == 'MS' else 0
                 outputs = outputs[:, :, f_dim:]
+                batch_y = batch_y[:, :, f_dim:]
+                # 调整掩码维度以匹配特征维度
+                valid_mask = valid_mask[:, :, f_dim:] if f_dim != -1 else valid_mask  # 关键：对齐特征维度
 
-                # add support for MS
-                batch_x = batch_x[:, :, f_dim:]
-                mask = mask[:, :, f_dim:]
+                # 仅在有效计算掩码位置计算损失
+                if valid_mask.any():  # 避免掩码全为False导致的错误
+                    loss = criterion(outputs[valid_mask], batch_y[valid_mask])
+                    total_loss.append(loss.item())
 
-                pred = outputs.detach()
-                true = batch_x.detach()
-                mask = mask.detach()
-
-                loss = criterion(pred[mask == 0], true[mask == 0])
-                total_loss.append(loss.item())
-        total_loss = np.average(total_loss)
+        # 计算平均损失（处理空掩码情况）
+        total_loss = np.average(total_loss) if total_loss else 0.0
         self.model.train()
         return total_loss
 
@@ -85,7 +87,6 @@ class Exp_Imputation(Exp_Basic):
             os.makedirs(path)
 
         time_now = time.time()
-
         train_steps = len(train_loader)
         early_stopping = EarlyStopping(patience=self.args.patience, verbose=True)
 
@@ -98,32 +99,42 @@ class Exp_Imputation(Exp_Basic):
 
             self.model.train()
             epoch_time = time.time()
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(train_loader):
+
+            # 接收6个值（新增nan_mask）
+            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark, target_mask, nan_mask) in enumerate(train_loader):
                 iter_count += 1
                 model_optim.zero_grad()
 
+                # 数据类型转换并移动到设备
                 batch_x = batch_x.float().to(self.device)
                 batch_x_mark = batch_x_mark.float().to(self.device)
+                target_mask = target_mask.float().to(self.device)  # 需要补全的位置（1表示需要补全）
+                nan_mask = nan_mask.float().to(self.device)  # 原始数据有效性（0表示有效，1表示无效）
 
-                # random mask
-                B, T, N = batch_x.shape
-                mask = torch.rand((B, T, N)).to(self.device)
-                mask[mask <= self.args.mask_rate] = 0  # masked
-                mask[mask > self.args.mask_rate] = 1  # remained
-                inp = batch_x.masked_fill(mask == 0, 0)
+                # 生成有效计算掩码：原始数据有效（nan_mask=0）且需要补全（target_mask=1）
+                valid_mask = (nan_mask == 0.0) & (target_mask == 1.0)
 
-                outputs = self.model(inp, batch_x_mark, None, None, mask)
+                # 掩盖输入中需要补全的位置
+                inp = batch_x.masked_fill(target_mask == 1.0, 0.0)
 
+                # 模型前向传播
+                outputs = self.model(inp, batch_x_mark, None, None, target_mask)
+
+                # 处理特征维度
                 f_dim = -1 if self.args.features == 'MS' else 0
                 outputs = outputs[:, :, f_dim:]
+                batch_x = batch_x[:, :, f_dim:]  # 用batch_x作为真实值（原始有效数据）
+                # 调整掩码维度以匹配特征维度
+                valid_mask = valid_mask[:, :, f_dim:] if f_dim != -1 else valid_mask
 
-                # add support for MS
-                batch_x = batch_x[:, :, f_dim:]
-                mask = mask[:, :, f_dim:]
+                # 仅在有效计算掩码位置计算损失
+                if valid_mask.any():  # 避免掩码全为False导致的错误
+                    loss = criterion(outputs[valid_mask], batch_x[valid_mask])
+                    train_loss.append(loss.item())
+                else:
+                    loss = torch.tensor(0.0, device=self.device)  # 无有效位置时损失为0
 
-                loss = criterion(outputs[mask == 0], batch_x[mask == 0])
-                train_loss.append(loss.item())
-
+                # 打印迭代信息
                 if (i + 1) % 100 == 0:
                     print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item()))
                     speed = (time.time() - time_now) / iter_count
@@ -132,11 +143,13 @@ class Exp_Imputation(Exp_Basic):
                     iter_count = 0
                     time_now = time.time()
 
+                # 反向传播与参数更新
                 loss.backward()
                 model_optim.step()
 
+            # 打印epoch信息
             print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
-            train_loss = np.average(train_loss)
+            train_loss = np.average(train_loss) if train_loss else 0.0
             vali_loss = self.vali(vali_data, vali_loader, criterion)
             test_loss = self.vali(test_data, test_loader, criterion)
 
@@ -153,76 +166,65 @@ class Exp_Imputation(Exp_Basic):
 
         return self.model
 
-    def test(self, setting, test=0):
+    def test(self, setting):
         test_data, test_loader = self._get_data(flag='test')
-        if test:
-            print('loading model')
-            self.model.load_state_dict(torch.load(os.path.join('./checkpoints/' + setting, 'checkpoint.pth')))
+        self.model.eval()
 
         preds = []
         trues = []
-        masks = []
-        folder_path = './test_results/' + setting + '/'
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
 
-        self.model.eval()
         with torch.no_grad():
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(test_loader):
+            # 接收6个值（新增nan_mask）
+            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark, target_mask, nan_mask) in enumerate(test_loader):
+                # 数据类型转换
                 batch_x = batch_x.float().to(self.device)
+                batch_y = batch_y.float().to(self.device)
                 batch_x_mark = batch_x_mark.float().to(self.device)
+                batch_y_mark = batch_y_mark.float().to(self.device)
+                target_mask = target_mask.float().to(self.device)
+                nan_mask = nan_mask.float().to(self.device)
 
-                # random mask
-                B, T, N = batch_x.shape
-                mask = torch.rand((B, T, N)).to(self.device)
-                mask[mask <= self.args.mask_rate] = 0  # masked
-                mask[mask > self.args.mask_rate] = 1  # remained
-                inp = batch_x.masked_fill(mask == 0, 0)
+                # 生成有效计算掩码
+                valid_mask = (nan_mask == 0.0) & (target_mask == 1.0)
 
-                # imputation
-                outputs = self.model(inp, batch_x_mark, None, None, mask)
+                # 掩盖输入
+                inp = batch_x.masked_fill(target_mask == 1.0, 0.0)
 
-                # eval
+                # 模型预测
+                outputs = self.model(inp, batch_x_mark, None, None, target_mask)
+
+                # 处理特征维度
                 f_dim = -1 if self.args.features == 'MS' else 0
                 outputs = outputs[:, :, f_dim:]
+                batch_y = batch_y[:, :, f_dim:]
+                # 调整掩码维度
+                valid_mask = valid_mask[:, :, f_dim:] if f_dim != -1 else valid_mask
 
-                # add support for MS 
-                batch_x = batch_x[:, :, f_dim:]
-                mask = mask[:, :, f_dim:]
+                # 仅保留有效计算掩码位置的结果
+                if valid_mask.any():
+                    outputs_masked = outputs[valid_mask]
+                    batch_y_masked = batch_y[valid_mask]
+                    preds.append(outputs_masked.cpu().numpy())
+                    trues.append(batch_y_masked.cpu().numpy())
 
-                outputs = outputs.detach().cpu().numpy()
-                pred = outputs
-                true = batch_x.detach().cpu().numpy()
-                preds.append(pred)
-                trues.append(true)
-                masks.append(mask.detach().cpu())
+        # 拼接结果并计算指标
+        if preds and trues:
+            preds = np.concatenate(preds, axis=0)
+            trues = np.concatenate(trues, axis=0)
+            print('test shape:', preds.shape, trues.shape)
 
-                if i % 20 == 0:
-                    filled = true[0, :, -1].copy()
-                    filled = filled * mask[0, :, -1].detach().cpu().numpy() + \
-                             pred[0, :, -1] * (1 - mask[0, :, -1].detach().cpu().numpy())
-                    visual(true[0, :, -1], filled, os.path.join(folder_path, str(i) + '.pdf'))
+            mse = np.mean((preds - trues) **2)
+            mae = np.mean(np.abs(preds - trues))
+            print(f'Test MSE: {mse:.6f}, Test MAE: {mae:.6f}')
+        else:
+            mse, mae = 0.0, 0.0
+            print("No valid test samples to evaluate.")
 
-        preds = np.concatenate(preds, 0)
-        trues = np.concatenate(trues, 0)
-        masks = np.concatenate(masks, 0)
-        print('test shape:', preds.shape, trues.shape)
-
-        # result save
+        # 保存结果
         folder_path = './results/' + setting + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
+        np.save(folder_path + 'preds.npy', preds)
+        np.save(folder_path + 'trues.npy', trues)
 
-        mae, mse, rmse, mape, mspe = metric(preds[masks == 0], trues[masks == 0])
-        print('mse:{}, mae:{}'.format(mse, mae))
-        f = open("result_imputation.txt", 'a')
-        f.write(setting + "  \n")
-        f.write('mse:{}, mae:{}'.format(mse, mae))
-        f.write('\n')
-        f.write('\n')
-        f.close()
-
-        np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
-        np.save(folder_path + 'pred.npy', preds)
-        np.save(folder_path + 'true.npy', trues)
-        return
+        return mse, mae
