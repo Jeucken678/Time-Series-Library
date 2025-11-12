@@ -1,29 +1,59 @@
 import os
 import torch
 from torch.utils.data import Dataset
+from sklearn.preprocessing import StandardScaler
 
 
 class PriceImputationDataset(Dataset):
-    """适配 price_imputation_datasets 文件夹的缺失值补全数据集"""
-    def __init__(self, root_path, flag="train"):
-        # 拼接文件路径（与你的数据集文件名完全匹配）
-        self.data = torch.load(os.path.join(root_path, f"{flag}_data.pt"))
-        self.nan_mask = torch.load(os.path.join(root_path, f"{flag}_nan_mask.pt"))
-        self.target_mask = torch.load(os.path.join(root_path, f"{flag}_target_mask.pt"))
-        # 遮盖预测目标位置（避免信息泄露）
-        self.input_data = self.data * (1 - self.target_mask)
+    def __init__(self, root_path, flag="train", **kwargs):
+        # 1. 加载数据（保持原有逻辑）
+        self.data = torch.load(os.path.join(root_path, f"{flag}_data-17_nan.pt"))
+        self.nan_mask = torch.load(os.path.join(root_path, f"{flag}_nan_mask-17_nan.pt"))
+        self.target_mask = torch.load(os.path.join(root_path, f"{flag}_target_mask-17_nan.pt"))
 
+        # 2. 强制替换所有 NaN 为 0（或其他合理值，如均值）
+        self.data = torch.where(torch.isnan(self.data), torch.tensor(0.0, dtype=self.data.dtype), self.data)  # 核心修改：全局替换 NaN
+        self.seq_len = self.data.shape[1]
+
+        # 4. 后续数据处理（保持原有逻辑）
+        self.input_data = self.data * (1 - self.nan_mask)
+        self.input_data = self.input_data * (1 - self.target_mask)
+        self.input_data = torch.where(torch.isnan(self.input_data), torch.tensor(0.0, dtype=self.input_data.dtype), self.input_data)
+
+        # ========== 新增：标准化 ==========
+        data_np = self.data.numpy()
+        scaler = StandardScaler()
+        # 展平后标准化，再恢复形状
+        data_scaled = scaler.fit_transform(data_np.reshape(-1, data_np.shape[-1])).reshape(data_np.shape)
+        self.data = torch.tensor(data_scaled, dtype=torch.float32)
+        # ====================================
+
+        # 再次打印统计信息（验证标准化效果）
+        print(f"\n===== {flag} 数据集统计信息（标准化后） =====")
+        print(f"最大值：{self.data.max().item()}")
+        print(f"最小值：{self.data.min().item()}")
+        print(f"均值：{self.data.mean().item()}")
+        print(f"标准差：{self.data.std().item()}")
+
+        # ... 后续处理代码 ...
+
+    # 关键：添加/恢复 __len__ 方法（返回样本总数）
     def __len__(self):
-        return len(self.data)
+        return len(self.data)  # self.data 是 [样本数, 序列长度, 特征数]，len(self.data) 就是样本数
 
     def __getitem__(self, idx):
-        return {
-            "x": self.input_data[idx],   # 模型输入（已遮盖预测目标）
-            "y_true": self.data[idx],    # 真实值（含缺失）
-            "nan_mask": self.nan_mask[idx],
-            "target_mask": self.target_mask[idx]
-        }
+        # （之前的 __getitem__ 代码不变）
+        x = self.input_data[idx]
+        y_true = self.data[idx]
+        nan_mask = self.nan_mask[idx]
+        target_mask = self.target_mask[idx]
 
+        x_mark = torch.zeros((self.seq_len, 1), dtype=torch.float32)
+        y_mark = torch.zeros((self.seq_len, 1), dtype=torch.float32)
+
+        valid_mask = (nan_mask == 0.0) & (target_mask == 1.0)
+
+        return x, y_true, x_mark, y_mark, target_mask, nan_mask  # 修正为英文逗号
 
 class PriceForecastDataset(Dataset):
     """适配 pridict_price_datasets 文件夹的价格预测数据集"""

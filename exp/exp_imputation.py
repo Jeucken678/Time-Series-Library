@@ -105,19 +105,22 @@ class Exp_Imputation(Exp_Basic):
                 iter_count += 1
                 model_optim.zero_grad()
 
-                # 数据类型转换并移动到设备
+                # 数据类型转换
                 batch_x = batch_x.float().to(self.device)
                 batch_x_mark = batch_x_mark.float().to(self.device)
-                target_mask = target_mask.float().to(self.device)  # 需要补全的位置（1表示需要补全）
-                nan_mask = nan_mask.float().to(self.device)  # 原始数据有效性（0表示有效，1表示无效）
+                target_mask = target_mask.float().to(self.device)
+                nan_mask = nan_mask.float().to(self.device)
 
-                # 生成有效计算掩码：原始数据有效（nan_mask=0）且需要补全（target_mask=1）
+                # 生成有效掩码
                 valid_mask = (nan_mask == 0.0) & (target_mask == 1.0)
 
-                # 掩盖输入中需要补全的位置
-                inp = batch_x.masked_fill(target_mask == 1.0, 0.0)
+                # 关键修改：跳过无有效补全位置的batch
+                if not valid_mask.any():
+                    print(f"跳过无有效补全位置的batch {i}")
+                    continue  # 不更新参数，直接进入下一个batch
 
-                # 模型前向传播
+                # 后续原有逻辑（掩盖输入、模型前向传播、损失计算等）
+                inp = batch_x.masked_fill(target_mask == 1.0, 0.0)
                 outputs = self.model(inp, batch_x_mark, None, None, target_mask)
 
                 # 处理特征维度
